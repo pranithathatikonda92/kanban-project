@@ -1,11 +1,7 @@
 
 pipeline {
 
-    agent {
-        node {
-            customWorkspace '/home/ubuntu/new-project/kanban-dashboard'
-        }
-    }
+    agent any
 
     environment {
         AWS_REGION = 'ap-southeast-2'
