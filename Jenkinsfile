@@ -182,7 +182,7 @@ stage('Rollback') {
         }
     }
 
-
+}
 
             steps {
                 withCredentials([
@@ -215,4 +215,4 @@ stage('Rollback') {
             echo 'FAILED: CI/CD pipeline failed. Check the stage logs and rollback result.'
         }
     }
-}
+
