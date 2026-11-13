@@ -13,8 +13,6 @@ pipeline {
         ECR_URI = '294615681006.dkr.ecr.ap-southeast-2.amazonaws.com/kanban-app-repo'
 
         DEPLOY_HOST = '172.31.43.236'
-        DEPLOYMENT_ATTEMPTED = 'false'
-        DEPLOYMENT_SUCCEEDED = 'false'
     }
 
     stages {
@@ -97,39 +95,28 @@ pipeline {
 
         stage('Deploy to EC2') {
             steps {
-                script {
-                    env.DEPLOYMENT_ATTEMPTED = 'true'
+                catchError(
+                    buildResult: 'FAILURE',
+                    stageResult: 'FAILURE'
+                ) {
+                    withCredentials([
+                        sshUserPrivateKey(
+                            credentialsId: 'deployment-ec2-ssh',
+                            keyFileVariable: 'SSH_KEY',
+                            usernameVariable: 'SSH_USER'
+                        )
+                    ]) {
+                        sh '''
+                            echo "Starting deployment on EC2..."
 
-                    catchError(
-                        buildResult: 'FAILURE',
-                        stageResult: 'FAILURE'
-                    ) {
-                        withCredentials([
-                            sshUserPrivateKey(
-                                credentialsId: 'deployment-ec2-ssh',
-                                keyFileVariable: 'SSH_KEY',
-                                usernameVariable: 'SSH_USER'
-                            )
-                        ]) {
-                            sh '''
-                                echo "Starting deployment on EC2..."
+                            ssh -i "$SSH_KEY" \
+                                -o BatchMode=yes \
+                                -o StrictHostKeyChecking=yes \
+                                "$SSH_USER@${DEPLOY_HOST}" \
+                                "bash ~/deploy-kanban.sh '${IMAGE_TAG}' '${BUILD_NUMBER}'"
 
-                                ssh -i "$SSH_KEY" \
-                                    -o BatchMode=yes \
-                                    -o StrictHostKeyChecking=yes \
-                                    "$SSH_USER@${DEPLOY_HOST}" \
-                                    "bash ~/deploy-kanban.sh '${IMAGE_TAG}' '${BUILD_NUMBER}'"
-
-                                echo "Deployment script completed."
-                            '''
-                        }
-                    }
-
-                    if (currentBuild.currentResult == 'SUCCESS') {
-                        env.DEPLOYMENT_SUCCEEDED = 'true'
-                        echo "Deployment completed successfully."
-                    } else {
-                        echo "Deployment failed. Verification will be skipped."
+                            echo "Deployment script completed."
+                        '''
                     }
                 }
             }
@@ -138,47 +125,39 @@ pipeline {
         stage('Verify Deployment') {
             when {
                 expression {
-                    env.DEPLOYMENT_SUCCEEDED == 'true'
+                    currentBuild.currentResult == 'SUCCESS'
                 }
             }
 
             steps {
-                script {
-                    catchError(
-                        buildResult: 'FAILURE',
-                        stageResult: 'FAILURE'
-                    ) {
-                        withCredentials([
-                            sshUserPrivateKey(
-                                credentialsId: 'deployment-ec2-ssh',
-                                keyFileVariable: 'SSH_KEY',
-                                usernameVariable: 'SSH_USER'
-                            )
-                        ]) {
-                            sh '''
-                                echo "Verifying application through Nginx..."
+                catchError(
+                    buildResult: 'FAILURE',
+                    stageResult: 'FAILURE'
+                ) {
+                    withCredentials([
+                        sshUserPrivateKey(
+                            credentialsId: 'deployment-ec2-ssh',
+                            keyFileVariable: 'SSH_KEY',
+                            usernameVariable: 'SSH_USER'
+                        )
+                    ]) {
+                        sh '''
+                            echo "Verifying application through Nginx..."
 
-                                ssh -i "$SSH_KEY" \
-                                    -o BatchMode=yes \
-                                    -o StrictHostKeyChecking=yes \
-                                    "$SSH_USER@${DEPLOY_HOST}" \
-                                    "curl -fsS http://127.0.0.1/ | grep -qi '<html'"
+                            ssh -i "$SSH_KEY" \
+                                -o BatchMode=yes \
+                                -o StrictHostKeyChecking=yes \
+                                "$SSH_USER@${DEPLOY_HOST}" \
+                                "curl -fsS http://127.0.0.1/ | grep -qi '<html'"
 
-                                echo "Application verification successful."
-                            '''
-                        }
+                            echo "Application verification successful."
+                        '''
                     }
                 }
             }
         }
 
         stage('Rollback') {
-            when {
-                expression {
-                    env.DEPLOYMENT_ATTEMPTED == 'true'
-                }
-            }
-
             steps {
                 script {
                     if (currentBuild.currentResult == 'FAILURE') {
