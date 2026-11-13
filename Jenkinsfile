@@ -142,13 +142,47 @@ pipeline {
             }
         }
 
-        stage('Rollback') {
-            when {
-                expression {
-                    env.DEPLOYMENT_STARTED == 'true' &&
-                    currentBuild.currentResult == 'FAILURE'
-                }
-            }
+        
+stage('Rollback') {
+    when {
+        expression {
+            env.DEPLOYMENT_STARTED == 'true' &&
+            currentBuild.currentResult == 'FAILURE'
+        }
+    }
+
+    steps {
+        withCredentials([
+            sshUserPrivateKey(
+                credentialsId: 'deployment-ec2-ssh',
+                keyFileVariable: 'SSH_KEY',
+                usernameVariable: 'SSH_USER'
+            )
+        ]) {
+            sh '''
+                echo "Deployment failed. Starting rollback..."
+
+                if ssh -i "$SSH_KEY" \
+                    -o BatchMode=yes \
+                    -o StrictHostKeyChecking=yes \
+                    "$SSH_USER@${DEPLOY_HOST}" \
+                    "test -f /tmp/kanban-nginx-backup-${BUILD_NUMBER}"; then
+
+                    ssh -i "$SSH_KEY" \
+                        -o BatchMode=yes \
+                        -o StrictHostKeyChecking=yes \
+                        "$SSH_USER@${DEPLOY_HOST}" \
+                        "sudo cp /tmp/kanban-nginx-backup-${BUILD_NUMBER} /etc/nginx/sites-available/kanban && sudo nginx -t && sudo systemctl reload nginx"
+
+                    echo "Rollback completed."
+                else
+                    echo "No backup found. Previous application configuration remains unchanged."
+                fi
+            '''
+        }
+    }
+}
+
 
             steps {
                 withCredentials([
