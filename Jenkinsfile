@@ -14,6 +14,7 @@ pipeline {
 
         DEPLOY_HOST = '172.31.43.236'
         DEPLOYMENT_ATTEMPTED = 'false'
+        DEPLOYMENT_SUCCEEDED = 'false'
     }
 
     stages {
@@ -40,10 +41,8 @@ pipeline {
             steps {
                 sh '''
                     echo "Checking application files..."
-
                     test -f Dockerfile
                     test -f package.json
-
                     echo "Application files verified."
                 '''
             }
@@ -67,7 +66,6 @@ pipeline {
             steps {
                 sh '''
                     echo "Checking AWS identity..."
-
                     aws sts get-caller-identity
 
                     echo "Logging in to Amazon ECR..."
@@ -87,11 +85,9 @@ pipeline {
             steps {
                 sh '''
                     echo "Pushing versioned image..."
-
                     docker push ${ECR_URI}:${IMAGE_TAG}
 
                     echo "Pushing latest image..."
-
                     docker push ${ECR_URI}:latest
 
                     echo "Images pushed successfully."
@@ -128,6 +124,13 @@ pipeline {
                             '''
                         }
                     }
+
+                    if (currentBuild.currentResult == 'SUCCESS') {
+                        env.DEPLOYMENT_SUCCEEDED = 'true'
+                        echo "Deployment completed successfully."
+                    } else {
+                        echo "Deployment failed. Verification will be skipped."
+                    }
                 }
             }
         }
@@ -135,8 +138,7 @@ pipeline {
         stage('Verify Deployment') {
             when {
                 expression {
-                    env.DEPLOYMENT_ATTEMPTED == 'true' &&
-                    currentBuild.currentResult == 'SUCCESS'
+                    env.DEPLOYMENT_SUCCEEDED == 'true'
                 }
             }
 
@@ -160,7 +162,7 @@ pipeline {
                                     -o BatchMode=yes \
                                     -o StrictHostKeyChecking=yes \
                                     "$SSH_USER@${DEPLOY_HOST}" \
-                                    "curl -fsS http://127.0.0.1/ >/dev/null"
+                                    "curl -fsS http://127.0.0.1/ | grep -qi '<html'"
 
                                 echo "Application verification successful."
                             '''
@@ -173,28 +175,35 @@ pipeline {
         stage('Rollback') {
             when {
                 expression {
-                    env.DEPLOYMENT_ATTEMPTED == 'true' &&
-                    currentBuild.currentResult == 'FAILURE'
+                    env.DEPLOYMENT_ATTEMPTED == 'true'
                 }
             }
 
             steps {
-                withCredentials([
-                    sshUserPrivateKey(
-                        credentialsId: 'deployment-ec2-ssh',
-                        keyFileVariable: 'SSH_KEY',
-                        usernameVariable: 'SSH_USER'
-                    )
-                ]) {
-                    sh '''
-                        echo "Deployment failed. Checking for backup..."
+                script {
+                    if (currentBuild.currentResult == 'FAILURE') {
 
-                        ssh -i "$SSH_KEY" \
-                            -o BatchMode=yes \
-                            -o StrictHostKeyChecking=yes \
-                            "$SSH_USER@${DEPLOY_HOST}" \
-                            "if [ -f /tmp/kanban-nginx-backup-${BUILD_NUMBER} ]; then sudo cp /tmp/kanban-nginx-backup-${BUILD_NUMBER} /etc/nginx/sites-available/kanban && sudo nginx -t && sudo systemctl reload nginx && echo 'Rollback successful.'; else echo 'No backup found. Previous application configuration remains unchanged.'; fi"
-                    '''
+                        echo "Pipeline failed. Starting rollback..."
+
+                        withCredentials([
+                            sshUserPrivateKey(
+                                credentialsId: 'deployment-ec2-ssh',
+                                keyFileVariable: 'SSH_KEY',
+                                usernameVariable: 'SSH_USER'
+                            )
+                        ]) {
+                            sh '''
+                                ssh -i "$SSH_KEY" \
+                                    -o BatchMode=yes \
+                                    -o StrictHostKeyChecking=yes \
+                                    "$SSH_USER@${DEPLOY_HOST}" \
+                                    "if [ -f /tmp/kanban-nginx-backup-${BUILD_NUMBER} ]; then sudo cp /tmp/kanban-nginx-backup-${BUILD_NUMBER} /etc/nginx/sites-available/kanban && sudo nginx -t && sudo systemctl reload nginx && echo 'Rollback successful.'; else echo 'No backup found. Previous application configuration remains unchanged.'; fi"
+                            '''
+                        }
+
+                    } else {
+                        echo "No rollback required. Deployment and verification succeeded."
+                    }
                 }
             }
         }
