@@ -59,7 +59,20 @@ pipeline {
                 '''
             }
         }
+        stage('Trivy Security Scan') {
+            steps {
+                sh '''
+                    echo "Scanning Docker image for HIGH and CRITICAL vulnerabilities..."
 
+                    trivy image \
+                        --severity HIGH,CRITICAL \
+                        --exit-code 1 \
+                        ${ECR_URI}:${IMAGE_TAG}
+
+                    echo "Trivy security scan passed."
+                '''
+            }
+        }
         stage('AWS Authentication') {
             steps {
                 sh '''
